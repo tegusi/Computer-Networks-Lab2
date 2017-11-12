@@ -19,6 +19,7 @@ class DataClient : public Element
 		Packet* make_packet(uint32_t dstip, uint32_t srcip, uint32_t seqnum, uint32_t acknum,
 								 bool synflag, bool ackflag, bool finflag);
     private:
+        int initialize(ErrorHandler *);
         uint32_t _my_address, _dstip, _rate,_delay;
         Timer _timer;
 };

@@ -11,10 +11,14 @@ DataClient::DataClient():_timer(this) {}
 DataClient::~DataClient() {}
 int DataClient::configure(Vector<String> &conf, ErrorHandler *errh){
     Args(conf, this, errh).read_mp("MY_IP", _my_address).read_mp("DST_IP", _dstip).read_mp("RATE", _rate).read_mp("DELAY",_delay).complete();
+    _timer.initialize(this);
     _timer.schedule_after_msec(_delay);
     return 0;
 }
-
+int DataClient::initialize(ErrorHandler*){
+    _timer.initialize(this);
+    return 0;
+}
 Packet* DataClient::make_packet(uint32_t dstip, uint32_t srcip, uint32_t seqnum, uint32_t acknum,
                                       bool synflag=false, bool ackflag=false, bool finflag=false){
     WritablePacket *packet = Packet::make(0,0,sizeof(struct TCPheader), 0);
