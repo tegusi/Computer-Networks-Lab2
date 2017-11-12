@@ -33,7 +33,7 @@ int IPClient::configure(Vector<String> &conf, ErrorHandler *errh) {
 void IPClient::broadcast(Packet* p){
     int n = noutputs();
     int sent = 0;
-    for (int i = 0; i < n-1 ; i++)
+    for (int i = 1; i < n-1 ; i++)
     {
       if(Packet *pp = p->clone())
           output(i).push(pp);
@@ -41,7 +41,7 @@ void IPClient::broadcast(Packet* p){
     }
     output(n-1).push(p);
     sent++;
-    assert(sent == n);
+    assert(sent == n - 1);
 }
 
 void IPClient::sendout(Packet* packet){
@@ -96,7 +96,7 @@ void IPClient::calPath()
 }
 
 
-WritablePacket* IPClient::makeIP(int type,int src,int dst,int seq,int size,int data_in[100])
+WritablePacket* IPClient::makeIP(int type,int src,int dst,int seq,int size,int data_in[100],TCPheader tcpdata = TCPheader())
 {
     int packetsize = sizeof(IPPacket);
     WritablePacket *packet = Packet::make(0, 0, packetsize, 0);
@@ -108,86 +108,104 @@ WritablePacket* IPClient::makeIP(int type,int src,int dst,int seq,int size,int d
     data->size = size;
     data->seq = seq;
     if(data_in != NULL) memcpy(data->data,data_in,sizeof(data));
+    data->tcpdata = tcpdata;
     return packet;
 }
 
 void IPClient::push(int port,Packet* packet){
-    int packetsize = sizeof(IPPacket);
-    IPPacket* rec = (IPPacket*)packet->data();
-    click_chatter("%d %d %d",rec->type,rec->src,rec->dst);
-    switch (rec->type)
-    {
-        case HELLO:
-        {
-            int u=rec->src,v=_myIP;
-            ipToPort[u] = port;
-            if(G[u][v] == 0 || rec->size != LinkList.size())
-            {
-                if(!G[u][v]) LinkList.push_back((Link){u,v});
-                G[u][v] = G[v][u] = 1;
-                click_chatter("%d",LinkList.size());
-                int data_in[100];data_in[0] = u,data_in[1] = v;
-                WritablePacket *packet = makeIP(LINK,_myIP,0,1,1,data_in);
-                calPath();
-                broadcast(packet);
 
-                for(int i = 0;i < LinkList.size();i++)
-                {
-                    data_in[0] = LinkList[i].u,data_in[1] = LinkList[i].v;
-                    packet = makeIP(LINK,_myIP,u,i,LinkList.size(),data_in);
-                    output(port).push(packet);
-                }
-            }
-            break;
-        }
-        case LINK:
+    if(port == 0)
+    {
+        TCPheader* header = (struct TCPheader*) packet->data();
+        int dstip = header->dstip, srcip = header->srcip;
+        click_chatter("Send packet: dstip %d, srcip %d, myip %d",dstip,srcip,_myIP);
+        WritablePacket *packet = makeIP(DATA,_myIP,dstip,1,1,NULL,*header);
+        sendout(packet);
+    }
+    else
+    {
+        int packetsize = sizeof(IPPacket);
+        IPPacket* rec = (IPPacket*)packet->data();
+        click_chatter("%d %d %d",rec->type,rec->src,rec->dst);
+        switch (rec->type)
         {
-            int u=rec->data[0],v=rec->data[1];
-            click_chatter("Link %d -> %d received",u,v);
-            if(G[u][v] == 0)
+            case HELLO:
             {
-                G[u][v] = G[v][u] = 1;
-                LinkList.push_back((Link){u,v});
-                if(rec->dst!= _myIP){
+                int u=rec->src,v=_myIP;
+                ipToPort[u] = port;
+                if(G[u][v] == 0 || rec->size != LinkList.size())
+                {
+                    if(!G[u][v]) LinkList.push_back((Link){u,v});
+                    G[u][v] = G[v][u] = 1;
+                    click_chatter("%d",LinkList.size());
+                    int data_in[100];data_in[0] = u,data_in[1] = v;
+                    WritablePacket *packet = makeIP(LINK,_myIP,0,1,1,data_in);
+                    calPath();
+                    broadcast(packet);
+
+                    for(int i = 0;i < LinkList.size();i++)
+                    {
+                        data_in[0] = LinkList[i].u,data_in[1] = LinkList[i].v;
+                        packet = makeIP(LINK,_myIP,u,i,LinkList.size(),data_in);
+                        output(port).push(packet);
+                    }
+                }
+                break;
+            }
+            case LINK:
+            {
+                int u=rec->data[0],v=rec->data[1];
+                click_chatter("Link %d -> %d received",u,v);
+                if(G[u][v] == 0)
+                {
+                    G[u][v] = G[v][u] = 1;
+                    LinkList.push_back((Link){u,v});
+                    if(rec->dst!= _myIP){
+                        broadcast(packet);
+                    }
+                    int data_in[100];data_in[0] = u,data_in[1] = v;
+                    WritablePacket *packet = makeIP(ACK,_myIP,rec->src,rec->seq,rec->size,data_in);
+                    output(port).push(packet);
+                    calPath();
+                }
+                break;
+            }
+            case ACK:
+            {
+                if(rec->seq + 1 > rec->size) return;
+                int data_in[100];data_in[0] = LinkList[rec->seq].u;data_in[1] = LinkList[rec->seq].v;
+                WritablePacket *packet = makeIP(LINK,_myIP,rec->src,rec->seq+1,LinkList.size(),data_in);
+                output(port).push(packet);
+                break;
+            }
+            case DATA:
+            {
+                if(rec->dst == _myIP)
+                {
+                    TCPheader* header = &(rec->tcpdata);
+                    int dstip = header->dstip, srcip = header->srcip;
+                    click_chatter("Received packet: dstip %d, srcip %d, myip %d",dstip,srcip,_myIP);
+                    WritablePacket *packet = Packet::make(0,0,sizeof(TCPheader),0); //TODO: TCP packet
+                    TCPheader* new_header = (struct TCPheader*) packet->data();
+                    memcpy(new_header,header,sizeof(TCPheader));
+                    output(0).push(packet);
+                }
+                else
+                sendout(packet);
+                break;
+            }
+            case BYE:
+            {
+                int u = rec->dst,v = _myIP;
+                if(G[u][v] != 0)
+                {
+                    std::vector<Link>::iterator i = LinkList.begin();
+                    while(i != LinkList.end()){
+                        if(i->u == u || i->v == u) {G[u][v] = 0;i = LinkList.erase(i);}
+                        else i++;
+                    }
                     broadcast(packet);
                 }
-                int data_in[100];data_in[0] = u,data_in[1] = v;
-                WritablePacket *packet = makeIP(ACK,_myIP,rec->src,rec->seq,rec->size,data_in);
-                output(port).push(packet);
-                calPath();
-            }
-            break;
-        }
-        case ACK:
-        {
-            if(rec->seq + 1 > rec->size) return;
-            int data_in[100];data_in[0] = LinkList[rec->seq].u;data_in[1] = LinkList[rec->seq].v;
-            WritablePacket *packet = makeIP(LINK,_myIP,rec->src,rec->seq+1,LinkList.size(),data_in);
-            output(port).push(packet);
-            break;
-        }
-        case DATA:
-        {
-            if(rec->dst == _myIP)
-            {
-                WritablePacket *packet = Packet::make(0,0,100,0); //TODO: TCP packet
-                output(1).push(packet);
-            }
-            else
-            sendout(packet);
-            break;
-        }
-        case BYE:
-        {
-            int u = rec->dst,v = _myIP;
-            if(G[u][v] != 0)
-            {
-                std::vector<Link>::iterator i = LinkList.begin();
-                while(i != LinkList.end()){
-                    if(i->u == u || i->v == u) {G[u][v] = 0;i = LinkList.erase(i);}
-                    else i++;
-                }
-                broadcast(packet);
             }
         }
     }

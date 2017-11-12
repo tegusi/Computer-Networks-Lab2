@@ -21,7 +21,7 @@ class IPClient : public Element {
         void sendout(Packet *);
         void run_timer(Timer*);
         void calPath();
-        WritablePacket* makeIP(int type,int src,int dst,int seq,int size,int data[100]);
+        WritablePacket* makeIP(int type,int src,int dst,int seq,int size,int data[100],TCPheader);
         int initialize(ErrorHandler*);
 
     private:
