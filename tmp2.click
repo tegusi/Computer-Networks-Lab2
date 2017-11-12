@@ -1,7 +1,9 @@
-require(library /home/comnetsii/elements/lossyrouterport.click);
+require(library /home/comnetsii/elements/routerport.click);
 
-rp :: LossyRouterPort(DEV $dev, IN_MAC $in_mac , OUT_MAC $out_mac, LOSS 0.05, DELAY 0.1);
+rp :: RouterPort(DEV $dev, IN_MAC $in_mac , OUT_MAC $out_mac);
 cl :: IPClient(MY_IP 2);
+tcp :: TCPhost(MY_IP 2);
 //pp :: PacketPrinter;
 
-rp->cl->rp;
+Idle->[0]tcp[0]->Discard;
+rp->[1]cl[0]->[1]tcp[1]->[0]cl[1]->rp;
